@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>子域名探查器 | Subdomain Scout</title>
+  <meta name="description" content="基于 DNS over HTTPS 的子域名探查，支持并发字典爆破、通配符识别、记录查看与 CSV/JSON 导出。" />
+  <style>
+    :root{--brand:#7aefff;--ink:#0b1736;--muted:#6b7a90;--glass:rgba(255,255,255,.6);--radius:18px}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:ui-sans-serif,system-ui;color:var(--ink);
+      background: radial-gradient(1100px 700px at 20% -10%, #b9f3ff 0%, transparent 50%), linear-gradient(180deg, #f6fdff 0%, #dff6ff 100%);}
+    header{position:sticky;top:0;z-index:10;backdrop-filter:blur(8px);background:rgba(255,255,255,.8);border-bottom:1px solid rgba(0,0,0,.06)}
+    .wrap{max-width:1200px;margin:0 auto;padding:18px}
+    .row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start}
+    .grow{flex:1 1 0%}
+    .card{background:var(--glass);backdrop-filter:blur(10px);border:1px solid rgba(0,0,0,.08);border-radius:var(--radius);padding:16px;box-shadow:0 10px 25px rgba(0,0,0,.06)}
+    h1{margin:0;font-size:22px}
+    .muted{color:var(--muted)}
+    .pill{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;border:1px solid rgba(0,0,0,.1);background:white}
+    button{cursor:pointer;padding:10px 14px;border-radius:12px;border:1px solid rgba(0,0,0,.08);font-weight:700;background:white}
+    button.primary{background:linear-gradient(135deg,var(--brand),#c5f6ff);border-color:transparent}
+    button.danger{background:linear-gradient(135deg,#ffd5d5,#fff);color:#8a1f1f;border-color:#ffdede}
+    input,select,textarea{width:100%;padding:10px 12px;border-radius:12px;border:1px solid rgba(0,0,0,.12);background:rgba(255,255,255,.95);outline:none}
+    textarea{min-height:120px;font-family:ui-monospace,Menlo,Consolas,monospace}
+    label{font-size:12px;color:var(--muted);font-weight:700;display:block;margin-bottom:6px}
+    .grid{display:grid;gap:14px}
+    .g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .g4{grid-template-columns:repeat(4,minmax(0,1fr))}
+    @media (max-width:1020px){.g3,.g4{grid-template-columns:1fr}}
+    table{width:100%;border-collapse:collapse;background:white;border-radius:12px;overflow:hidden}
+    th,td{padding:10px 12px;border-bottom:1px solid #eef6fb;text-align:left;font-size:14px}
+    th{background:linear-gradient(180deg,#f7fdff,#eefaff);font-weight:800}
+    .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+    .tag{padding:2px 8px;border-radius:999px;border:1px solid rgba(0,0,0,.08);font-size:12px;font-weight:800;display:inline-flex;gap:6px}
+    .ok{background:#ecfeff}.warn{background:#fff7e6}.danger{background:#ffefef}
+    .footer{color:var(--muted);font-size:12px;text-align:center;margin:18px 0}
+    .progress{height:10px;background:#e6f8ff;border-radius:999px;overflow:hidden}
+    .bar{height:100%;background:linear-gradient(90deg,var(--brand),#b5f3ff);width:0%}
+  </style>
+</head>
+<body>
+<header>
+  <div class="wrap row" style="align-items:center">
+    <div class="grow">
+      <h1>子域名探查器 <span class="muted" style="font-size:14px">Subdomain Scout</span></h1>
+      <div class="muted">DNS over HTTPS 被动/半主动枚举 · 通配符识别 · 多记录查看 · 导出</div>
+    </div>
+    <a class="pill" href="https://x.com/menglayer" target="_blank">关注我 @menglayer</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="card">
+    <div class="grid g3">
+      <div>
+        <label>根域名</label>
+        <input id="root" placeholder="example.com" />
+      </div>
+      <div>
+        <label>解析服务</label>
+        <select id="resolver">
+          <option value="google" selected>Google DoH</option>
+          <option value="cloudflare">Cloudflare DoH</option>
+        </select>
+      </div>
+      <div>
+        <label>并发</label>
+        <select id="concurrency"><option>8</option><option selected>12</option><option>16</option><option>24</option></select>
+      </div>
+    </div>
+
+    <div class="grid g3" style="margin-top:12px">
+      <div>
+        <label>包含记录类型</label>
+        <div class="row">
+          <label class="pill"><input type="checkbox" class="rt" value="A" checked/> A</label>
+          <label class="pill"><input type="checkbox" class="rt" value="AAAA"/> AAAA</label>
+          <label class="pill"><input type="checkbox" class="rt" value="CNAME"/> CNAME</label>
+          <label class="pill"><input type="checkbox" class="rt" value="MX"/> MX</label>
+          <label class="pill"><input type="checkbox" class="rt" value="TXT"/> TXT</label>
+        </div>
+      </div>
+      <div>
+        <label>字典（每行一个前缀，可留空用内置）</label>
+        <textarea id="wordlist" placeholder="www\napi\ncdp\nadmin"></textarea>
+      </div>
+      <div>
+        <label>智能扩展</label>
+        <div class="row">
+          <label class="pill"><input type="checkbox" id="expEnv" checked/> dev/qa/stg/prod 扩展</label>
+          <label class="pill"><input type="checkbox" id="expNum" checked/> 数字后缀 0–9</label>
+          <label class="pill"><input type="checkbox" id="expRegion"/> 区域后缀（us/eu/ap/cn）</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:12px;align-items:center">
+      <button id="startBtn" class="primary">🚀 开始探查</button>
+      <button id="stopBtn" class="pill">⏹ 停止</button>
+      <div class="grow"></div>
+      <div id="stats" class="muted">待机中</div>
+    </div>
+    <div class="progress" style="margin-top:8px"><div id="bar" class="bar"></div></div>
+  </section>
+
+  <section class="card" style="margin-top:12px">
+    <div class="row" style="align-items:center">
+      <div class="grow">
+        <h3 style="margin:0 0 6px 0">结果</h3>
+        <div class="muted">已过滤明显通配符命中；可点击主机名查看</div>
+      </div>
+      <button id="copyBtn">📋 复制 JSON</button>
+      <button id="csvBtn">📥 下载 CSV</button>
+      <button id="clearBtn" class="pill">🧹 清空</button>
+    </div>
+
+    <div class="card" style="padding:0;margin-top:8px">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:32px">#</th>
+            <th>主机名</th>
+            <th>记录</th>
+            <th>附加信息</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"><tr><td colspan="4" class="muted" style="text-align:center">暂无数据</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" style="margin-top:12px">
+    <h3 style="margin-top:0">DNS 记录查看</h3>
+    <div class="grid g3">
+      <div>
+        <label>查询主机名/域名</label>
+        <input id="lookupHost" placeholder="_dmarc.example.com 或 example.com" />
+      </div>
+      <div>
+        <label>记录类型</label>
+        <select id="lookupType">
+          <option>A</option><option>AAAA</option><option>CNAME</option><option>NS</option><option>SOA</option><option>MX</option><option>TXT</option><option>CAA</option>
+        </select>
+      </div>
+      <div style="align-self:end"><button id="lookupBtn" class="primary">🔎 查询</button></div>
+    </div>
+    <div id="lookupResult" class="card" style="margin-top:10px"><span class="muted">查询结果将显示在这里。</span></div>
+  </section>
+
+  <div class="footer">⚠️ 说明：基于公开 DoH（Google/Cloudflare）。若目标开启 DNS 通配符，工具会尽量识别并过滤；但仍可能需人工复核。</div>
+</main>
+
+<script>
+  const $=(q,r=document)=>r.querySelector(q); const $$=(q,r=document)=>Array.from(r.querySelectorAll(q));
+  const short=(s)=>s.length>64?s.slice(0,61)+'…':s;
+  function dohURL(resolver,name,type){
+    if(resolver==='google') return `https://dns.google/resolve?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`;
+    return `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`;
+  }
+  async function dohQuery(resolver,name,type){
+    const url=dohURL(resolver,name,type);
+    const opt = resolver==='cloudflare' ? {headers:{'accept':'application/dns-json'}} : {};
+    const r=await fetch(url,opt); if(!r.ok) throw new Error('HTTP '+r.status);
+    return await r.json();
+  }
+
+  const DEFAULT_WORDS = [
+    'www','api','cdn','img','static','assets','media','files','download','upload','video','img-cdn','cdn1','cdn2','edge','cache','origin',
+    'm','mobile','wap','app','web','portal','home','main','site','www2','www1',
+    'blog','news','status','help','support','docs','doc','kb','wiki','guide','developers','devportal',
+    'mail','smtp','imap','pop','mx','autodiscover','email','lists',
+    'ftp','sftp','ssh','vpn','gateway','proxy','bastion','jump',
+    'api1','api2','v1','v2','v3','graph','graphql','rest','ws','socket',
+    'auth','login','sso','oauth','keycloak','idp','accounts',
+    'admin','panel','dashboard','console','cp','manage','cms',
+    'shop','store','pay','billing','invoice','checkout',
+    'search','srv','service','micro','backend','internal','intra',
+    'dev','test','staging','stage','stg','pre','beta','qa','demo','preview','sandbox','canary','exp',
+    'img1','img2','static1','static2','res','res1','res2',
+    'node','elk','kibana','grafana','prometheus','metrics','monitor','logs','log','alert',
+    'git','gitlab','bitbucket','code','ci','cd','jenkins','runner',
+    'forum','community','event','meet',
+    'nlb','alb','lb','nginx','haproxy',
+    'geo','cn','us','eu','ap','hk','jp','in','uk','de','sg',
+    'image','photo','avatar','static-img'
+  ];
+  const ENV_EXT = ['dev','test','qa','stg','stage','staging','beta','pre','demo','prod'];
+  const REGION_EXT = ['us','eu','ap','cn','hk','sg','jp','in','uk','de'];
+
+  function buildCandidates(root){
+    const base = ($('#wordlist').value||'').split(/\n|,|;/).map(s=>s.trim()).filter(Boolean);
+    const words = base.length? base : DEFAULT_WORDS;
+    const out = new Set();
+    const add=(p)=>out.add(`${p}.${root}`.toLowerCase());
+    const expEnv=$('#expEnv').checked; const expNum=$('#expNum').checked; const expRegion=$('#expRegion').checked;
+    for(const w of words){ add(w); if(expNum){ for(let i=0;i<=9;i++) add(w+i) } if(expEnv){ for(const e of ENV_EXT){ add(`${w}-${e}`); add(`${e}-${w}`) } } if(expRegion){ for(const r of REGION_EXT){ add(`${w}-${r}`) } } }
+    return Array.from(out);
+  }
+
+  let stopFlag=false; const results=[]; let totalTasks=0; let finished=0; let wildcardSig=null;
+  function updateProgress(){ const pct = totalTasks? Math.min(100, Math.floor(finished*100/totalTasks)) : 0; $('#bar').style.width=pct+'%'; $('#stats').textContent=`已完成 ${finished}/${totalTasks} · 命中 ${results.length}` }
+  function reset(){ stopFlag=false; results.length=0; totalTasks=0; finished=0; wildcardSig=null; $('#tbody').innerHTML='<tr><td colspan="4" class="muted" style="text-align:center">暂无数据</td></tr>'; updateProgress(); $('#stats').textContent='待机中' }
+
+  function pushResult(row){ if(results.length===0) $('#tbody').innerHTML=''; results.push(row); const tr=document.createElement('tr'); tr.innerHTML=`
+      <td>${results.length}</td>
+      <td><a target="_blank" href="https://${row.host}">${row.host}</a></td>
+      <td class="mono">${row.type}: ${short(row.value)}</td>
+      <td class="muted">${row.flags||''}</td>`; $('#tbody').appendChild(tr); }
+
+  function sigFromAnswer(ans){
+    // 生成用于通配符比对的签名：按 type+data 去重后的串
+    if(!Array.isArray(ans)) return '';
+    const pairs = ans.map(a=>`${a.type}:${a.data}`).sort();
+    return pairs.join('|');
+  }
+
+  async function detectWildcard(resolver, root){
+    try{
+      const rnd = Math.random().toString(36).slice(2,10);
+      const name = `${rnd}.${root}`;
+      const r = await dohQuery(resolver, name, 'A');
+      if(r.Answer){ wildcardSig = sigFromAnswer(r.Answer); }
+    }catch(e){ wildcardSig = null }
+  }
+
+  async function scan(){
+    const root=($('#root').value||'').trim().replace(/^https?:\/\//,'').replace(/\/$/,'');
+    if(!root || !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(root)){ alert('请填写有效根域名，如 example.com'); return }
+    reset();
+    const resolver=$('#resolver').value; await detectWildcard(resolver, root);
+    const candidates = buildCandidates(root);
+    const types = $$('.rt:checked').map(x=>x.value);
+    const conc = parseInt($('#concurrency').value,10)||12;
+    // 仅对 A/CNAME/AAAA 进行存在性判断；MX/TXT 作为补充
+    const existTypes = types.filter(t=>['A','AAAA','CNAME'].includes(t));
+    totalTasks = candidates.length * Math.max(1, existTypes.length);
+    updateProgress();
+
+    const tasks = [];
+    for(const host of candidates){
+      for(const t of existTypes){
+        tasks.push(async()=>{
+          if(stopFlag) return;
+          try{
+            const r = await dohQuery(resolver, host, t);
+            finished++; updateProgress();
+            if(!r.Answer) return;
+            // 通配符过滤
+            const sig = sigFromAnswer(r.Answer);
+            if(wildcardSig && sig===wildcardSig) return; // 可能命中通配符
+            for(const a of r.Answer){
+              const row = { host, type:a.type, value:a.data, flags: (r.AD?'DNSSEC✓ ':'') + (r.Authoritative?'AA ':'') };
+              pushResult(row);
+            }
+          }catch(e){ finished++; updateProgress(); }
+        });
+      }
+    }
+
+    await runWithConcurrency(tasks, conc);
+
+    // 可选：对命中主机补充 TXT/MX 速查
+    const more = results.map(x=>x.host).filter((v,i,arr)=>arr.indexOf(v)===i);
+    const extraTypes = types.filter(t=>['MX','TXT'].includes(t));
+    const extraTasks=[]; totalTasks += more.length * extraTypes.length; updateProgress();
+    for(const host of more){ for(const t of extraTypes){ extraTasks.push(async()=>{ if(stopFlag) return; try{ const r=await dohQuery(resolver, host, t); finished++; updateProgress(); if(r.Answer){ for(const a of r.Answer){ pushResult({host, type:a.type, value:a.data, flags:(r.AD?'DNSSEC✓ ':'')+(r.Authoritative?'AA ':'')}) } } }catch(e){ finished++; updateProgress(); } }) } }
+    await runWithConcurrency(extraTasks, conc);
+  }
+
+  async function runWithConcurrency(tasks, limit){
+    const res=new Array(tasks.length); let i=0, running=0; return new Promise((resolve)=>{ const launch=()=>{ if(i===tasks.length && running===0) return resolve(res); while(running<limit && i<tasks.length){ const idx=i++; running++; tasks[idx]().then(v=>res[idx]=v).catch(e=>res[idx]=null).finally(()=>{running--; launch()}) } }; launch(); })
+  }
+
+  // Lookup tool
+  async function lookup(){
+    const host=($('#lookupHost').value||'').trim(); if(!host) return alert('请输入要查询的主机名');
+    const type=$('#lookupType').value; const resolver=$('#resolver').value;
+    $('#lookupResult').innerHTML='<span class="muted">查询中…</span>';
+    try{ const r=await dohQuery(resolver, host, type); const box=document.createElement('div'); box.innerHTML=`<div class="muted">${host} · ${type}</div>`; if(r.Answer){ box.innerHTML+=r.Answer.map(a=>`<div class="mono">${a.type}: ${a.data}</div>`).join('') } else { box.innerHTML+='<div class="muted">未找到记录</div>'; } $('#lookupResult').innerHTML=''; $('#lookupResult').appendChild(box); }catch(e){ $('#lookupResult').innerHTML='<span class="muted">查询失败</span>' }
+  }
+
+  // Export
+  function toCSV(){ if(results.length===0) return ''; const head=['host','type','value','flags']; const lines=[head.join(',')]; for(const r of results){ lines.push([r.host,r.type,String(r.value).replaceAll('"','\"'),r.flags||''].map(v=>`"${v}"`).join(',')) } return lines.join('\n') }
+
+  // Bindings
+  $('#startBtn').addEventListener('click', scan);
+  $('#stopBtn').addEventListener('click', ()=>{ stopFlag=true; $('#stats').textContent+=' · 已请求停止'; });
+  $('#lookupBtn').addEventListener('click', lookup);
+  $('#copyBtn').addEventListener('click', ()=>{ const data=JSON.stringify(results, null, 2); navigator.clipboard.writeText(data).then(()=>alert('已复制 JSON')).catch(()=>alert('复制失败')) });
+  $('#csvBtn').addEventListener('click', ()=>{ const csv=toCSV(); if(!csv){alert('暂无可导出数据');return} const blob=new Blob([csv],{type:'text/csv'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download='subdomains.csv'; a.click(); URL.revokeObjectURL(url); });
+  $('#clearBtn').addEventListener('click', reset);
+</script>
+</body>
+</html>
